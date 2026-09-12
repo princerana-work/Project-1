@@ -42,8 +42,8 @@ version = 0.1
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy==master,urllib3,openssl
-
+requirements = 
+python3,kivy==2.3.0,urllib3,openssl
 p4a.branch = master
 
 # (str) Custom source folders for requirements
