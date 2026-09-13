@@ -9,6 +9,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
 
     steps:
       - name: Checkout source
@@ -35,17 +36,22 @@ jobs:
             cmake libffi-dev libssl-dev \
             build-essential
 
-      - name: Install Buildozer
+      - name: Install Buildozer and Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install buildozer
           python -m pip install "Cython==0.29.34"
+          python -m pip install pexpect
 
-      - name: Install Compatible Android NDK (r25b)
+      - name: Install Compatible Android NDK (r25c)
         run: |
           sudo ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --install "ndk;25.2.9519653"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/25.2.9519653" >> $GITHUB_ENV
           echo "ANDROID_NDK_PATH=${ANDROID_SDK_ROOT}/ndk/25.2.9519653" >> $GITHUB_ENV
+
+      - name: Accept Android Licenses
+        run: |
+          yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
       - name: Check architecture configuration
         run: |
@@ -58,17 +64,56 @@ jobs:
         run: |
           rm -rf .buildozer
           rm -rf "$HOME/.buildozer"
+          rm -rf "$HOME/.gradle"
+          rm -rf bin/
 
       - name: Build APK
         run: |
           buildozer -v android debug 2>&1 | tee build.log
+        env:
+          GRADLE_OPTS: "-Xmx4096m -XX:+UseG1GC"
 
-      - name: Upload APK
+      - name: Find and List Generated APK
+        if: always()
+        run: |
+          echo "========== Searching for APK files =========="
+          find . -name "*.apk" -type f 2>/dev/null | head -20
+          echo ""
+          echo "========== Listing bin directory =========="
+          ls -lah bin/ 2>/dev/null || echo "bin directory not found"
+          echo ""
+          echo "========== Listing .buildozer =========="
+          find .buildozer -name "*.apk" -type f 2>/dev/null | head -10
+          echo ""
+          echo "========== Full directory structure =========="
+          ls -lah
+
+      - name: Check APK Status
+        if: success()
+        run: |
+          if find . -name "*.apk" -type f | grep -q .; then
+            echo "✅ APK file found!"
+            find . -name "*.apk" -type f -exec ls -lh {} \;
+          else
+            echo "⚠️ APK not found in expected locations"
+            exit 0
+          fi
+
+      - name: Copy APK to bin directory
+        if: success()
+        run: |
+          mkdir -p bin
+          find . -name "*.apk" -type f ! -path "./.buildozer/android/platform/build-*/.buildozer/*" -exec cp {} bin/ \; 2>/dev/null || true
+          ls -lah bin/ || true
+
+      - name: Upload APK as Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: package
-          path: bin/*
+          name: APK-Release
+          path: bin/*.apk
+          retention-days: 30
+          if-no-files-found: warn
 
       - name: Upload build log
         if: failure()
@@ -76,3 +121,13 @@ jobs:
         with:
           name: build-log
           path: build.log
+          retention-days: 7
+
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "========== BUILD SUMMARY =========="
+          if [ -f build.log ]; then
+            echo "✅ Build log generated"
+            tail -50 build.log
+          fi
